@@ -8,29 +8,17 @@ const yt = {
     get url() {
         return {
             origin: 'https://ytmp3.cx'
-        };
+        }
     },
 
     get baseHeaders() {
         return {
-            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'accept-encoding': 'gzip, deflate, br, zstd',
-            'accept-language': 'en-US,en;q=0.9',
-            'cache-control': 'no-cache',
-            'pragma': 'no-cache',
-            'sec-ch-ua': '"Chromium";v="123", "Not:A-Brand";v="8"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-fetch-dest': 'document',
-            'sec-fetch-mode': 'navigate',
-            'sec-fetch-site': 'none',
-            'upgrade-insecure-requests': '1',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
-        };
+            'accept-encoding': 'gzip, deflate, br, zstd'
+        }
     },
 
     extractVideoId: function (fV) {
-        let v;
+        let v
         if (fV.indexOf('youtu.be') > -1) {
             v = /\/([a-zA-Z0-9\-\_]{11})/.exec(fV);
         } else if (fV.indexOf('youtube.com') > -1) {
@@ -40,169 +28,117 @@ const yt = {
                 v = /v\=([a-zA-Z0-9\-\_]{11})/.exec(fV);
             }
         }
-        const result = v?.[1];
-        if (!result) throw Error(`gagal extract video id`);
-        return result;
+        const result = v?.[1]
+        if (!result) throw Error(`gagal extract video id`)
+        return result
     },
 
     getInitUrl: async function () {
+        "use strict"
         try {
-            console.log('Mengambil homepage...');
-            const r1 = await fetch(this.url.origin, { 
-                headers: this.baseHeaders 
-            });
-            
-            if (!r1.ok) {
-                throw new Error(`HTTP error! status: ${r1.status}`);
-            }
+            const r1 = await fetch(this.url.origin, { headers: this.baseHeaders })
+            console.log('hit homepage')
 
-            const html = await r1.text();
-            console.log('Homepage berhasil diambil');
+            const html = await r1.text()
+            const jsPath = html.match(/<script src="(.+?)"/)?.[1]
+            const jsUrl = this.url.origin + jsPath
 
-            const scriptMatch = html.match(/<script src="(\/js\/app\.[a-f0-9]+\.js)"/);
-            if (!scriptMatch) {
-                throw new Error('Tidak dapat menemukan script utama');
-            }
+            const r2 = await fetch(jsUrl, { headers: this.baseHeaders })
+            console.log('hit js')
+            const js = await r2.text()
 
-            const jsPath = scriptMatch[1];
-            const jsUrl = this.url.origin + jsPath;
-            console.log('JS URL:', jsUrl);
+            const gB_m = js.match(/gB=(.+?),gD/)?.[1]
+            const gB = eval(gB_m)
 
-            const r2 = await fetch(jsUrl, { 
-                headers: this.baseHeaders 
-            });
-            
-            if (!r2.ok) {
-                throw new Error(`HTTP error! status: ${r2.status}`);
-            }
+            const html_m = html.match(/<script>(.+?)<\/script>/)?.[1]
+            const hiddenGc = eval(html_m + "gC")
+            const gC = Object.fromEntries(Object.getOwnPropertyNames(hiddenGc).map(key => [key, hiddenGc[key]]))
 
-            const js = await r2.text();
-            console.log('JS berhasil diambil');
+            const decodeBin = (d) => d.split(' ').map(v => parseInt(v, 2))
+            const decodeHex = (d) => d.match(/0x[a-fA-F0-9]{2}/g).map(v => String.fromCharCode(v)).join("")
+            const getTimestamp = () => Math.floor((new Date).getTime() / 1e3)
 
-            const baseUrlMatch = js.match(/baseURL:\s*"([^"]+)"/);
-            if (!baseUrlMatch) {
-                const altMatch = js.match(/baseURL\s*=\s*"([^"]+)"/);
-                if (!altMatch) {
-                    throw new Error('Tidak dapat menemukan baseURL');
+            function authorization() {
+                var dec = decodeBin(gC.d(1)[0]);
+                var k = '';
+                for (var i = 0; i < dec.length; i++) k += (gC.d(2)[0] > 0) ? atob(gC.d(1)[1]).split('').reverse().join('')[(dec[i] - gC.d(2)[1])] : atob(gC.d(1)[1])[(dec[i] - gC.d(2)[1])];
+                if (gC.d(2)[2] > 0) k = k.substring(0, gC.d(2)[2]);
+                switch (gC.d(2)[3]) {
+                    case 0:
+                        return btoa(k + '_' + decodeHex(gC.d(3)[0]));
+                    case 1:
+                        return btoa(k.toLowerCase() + '_' + decodeHex(gC.d(3)[0]));
+                    case 2:
+                        return btoa(k.toUpperCase() + '_' + decodeHex(gC.d(3)[0]));
                 }
-                return altMatch[1];
             }
 
-            const baseURL = baseUrlMatch[1];
-            console.log('Base URL ditemukan:', baseURL);
-            
-            return baseURL;
-
-        } catch (error) {
-            console.error('Error di getInitUrl:', error.message);
-            throw new Error(`Gagal mendapatkan init URL: ${error.message}`);
+            const api_m = js.matchAll(/};var \S{1}=(.+?);gR&&\(/g)
+            const e = Array.from(api_m)?.[1]?.[1]
+            const apiUrl = eval(`${e}`)
+            return apiUrl
+        } catch (e) {
+            throw new Error('fungsi getApiUrl gagal')
         }
     },
 
     download: async function (url, f = 'mp3') {
-        if (!/^mp3|mp4$/.test(f)) {
-            throw Error(`Format harus mp3 atau mp4`);
-        }
+        if (!/^mp3|mp4$/.test(f)) throw Error(`format valid mp3 or mp4`)
 
-        const v = this.extractVideoId(url);
-        console.log('Video ID:', v);
+        const v = this.extractVideoId(url)
 
         const headers = {
             'referer': this.url.origin,
-            ...this.baseHeaders,
-            'content-type': 'application/json',
-            'origin': this.url.origin
-        };
-
-        const baseURL = await this.getInitUrl();
-        const initApi = `${baseURL}/api/init`;
-        console.log('Init API:', initApi);
-
-        const r1 = await fetch(initApi, { 
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify({})
-        });
-
-        if (!r1.ok) {
-            throw new Error(`Init request failed: ${r1.status}`);
+            ...this.baseHeaders
         }
 
-        const j1 = await r1.json();
-        console.log('Init response:', j1);
+        const initApi = await this.getInitUrl()
 
-        if (!j1.convertURL) {
-            throw new Error('Convert URL tidak ditemukan di response init');
-        }
+        const r1 = await fetch(initApi, { headers })
+        console.log('hit init')
 
-        const convertApi = j1.convertURL + '&v=' + v + '&f=' + f;
-        console.log('Convert API:', convertApi);
+        const j1 = await r1.json()
+        const { convertURL } = j1
 
-        const r2 = await fetch(convertApi, { headers });
-        const j2 = await r2.json();
-        console.log('Convert response:', j2);
+        const convertApi = convertURL + '&v=' + v + '&f=' + f + '&_=' + Math.random()
+        const r2 = await fetch(convertApi, { headers })
+        console.log('hit convert url')
 
+        const j2 = await r2.json()
         if (j2.error) {
-            throw Error(`Error di convert: ${j2.error}`);
+            throw Error(`ada error di value convert. nih\n${JSON.stringify(j2, null, 2)}`)
         }
 
         if (j2.redirectURL) {
-            const r3 = await fetch(j2.redirectURL, { headers });
-            const j3 = await r3.json();
-            
+            const r3 = await fetch(j2.redirectURL, { headers })
+            console.log('hit redirect')
+            const j3 = await r3.json()
             const result = {
-                title: j3.title || 'Unknown Title',
+                title: j3.title,
                 downloadURL: j3.downloadURL,
-                format: f,
-                duration: j3.duration || null,
-                quality: j3.quality || null
-            };
-            return result;
-        } else if (j2.progressURL) {
-            let progressData;
-            let attempts = 0;
-            const maxAttempts = 10;
-            
-            do {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                const r3 = await fetch(j2.progressURL, { headers });
-                progressData = await r3.json();
-                attempts++;
-                
-                console.log(`Progress check ${attempts}:`, progressData);
-                
-                if (progressData.error) {
-                    throw Error(`Error progress: ${progressData.error}`);
-                }
-                
-                if (progressData.progress === 3 || progressData.downloadURL) {
-                    const result = {
-                        title: progressData.title || j2.title || 'Unknown Title',
-                        downloadURL: progressData.downloadURL || j2.downloadURL,
-                        format: f,
-                        duration: progressData.duration || null,
-                        quality: progressData.quality || null
-                    };
-                    return result;
-                }
-                
-            } while (attempts < maxAttempts);
-            
-            throw new Error('Timeout menunggu konversi selesai');
-        } else if (j2.downloadURL) {
-            const result = {
-                title: j2.title || 'Unknown Title',
-                downloadURL: j2.downloadURL,
-                format: f,
-                duration: j2.duration || null,
-                quality: j2.quality || null
-            };
-            return result;
+                format: f
+            }
+            return result
         } else {
-            throw new Error('Tidak dapat menemukan download URL');
+            let j3b
+            do {
+                const r3b = await fetch(j2.progressURL, { headers })
+                console.log('hit progress')
+                j3b = await r3b.json()
+                if (j3b.error) throw Error(`ada error pas cek progress. nih\n${JSON.stringify(j3b, null, 2)}`)
+                if (j3b.progress == 3) {
+                    const result = {
+                        title: j3b.title,
+                        downloadURL: j2.downloadURL,
+                        format: f
+                    }
+                    return result
+                }
+                await new Promise(resolve => setTimeout(resolve, 3000))
+            } while (j3b.error != 3)
         }
     }
-};
+}
 
 app.get('/yt', async (req, res) => {
     try {
