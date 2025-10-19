@@ -8,7 +8,7 @@ const yt = {
     get url() {
         return {
             origin: 'https://ytmp3.cx'
-        }
+        };
     },
 
     get baseHeaders() {
@@ -26,11 +26,11 @@ const yt = {
             'sec-fetch-site': 'none',
             'upgrade-insecure-requests': '1',
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
-        }
+        };
     },
 
     extractVideoId: function (fV) {
-        let v
+        let v;
         if (fV.indexOf('youtu.be') > -1) {
             v = /\/([a-zA-Z0-9\-\_]{11})/.exec(fV);
         } else if (fV.indexOf('youtube.com') > -1) {
@@ -40,9 +40,9 @@ const yt = {
                 v = /v\=([a-zA-Z0-9\-\_]{11})/.exec(fV);
             }
         }
-        const result = v?.[1]
-        if (!result) throw Error(`gagal extract video id`)
-        return result
+        const result = v?.[1];
+        if (!result) throw Error(`gagal extract video id`);
+        return result;
     },
 
     getInitUrl: async function () {
@@ -59,7 +59,6 @@ const yt = {
             const html = await r1.text();
             console.log('Homepage berhasil diambil');
 
-            // Cari script utama
             const scriptMatch = html.match(/<script src="(\/js\/app\.[a-f0-9]+\.js)"/);
             if (!scriptMatch) {
                 throw new Error('Tidak dapat menemukan script utama');
@@ -69,7 +68,6 @@ const yt = {
             const jsUrl = this.url.origin + jsPath;
             console.log('JS URL:', jsUrl);
 
-            // Ambil script JS
             const r2 = await fetch(jsUrl, { 
                 headers: this.baseHeaders 
             });
@@ -81,10 +79,8 @@ const yt = {
             const js = await r2.text();
             console.log('JS berhasil diambil');
 
-            // Cari baseURL dengan regex yang lebih robust
             const baseUrlMatch = js.match(/baseURL:\s*"([^"]+)"/);
             if (!baseUrlMatch) {
-                // Coba pattern alternatif
                 const altMatch = js.match(/baseURL\s*=\s*"([^"]+)"/);
                 if (!altMatch) {
                     throw new Error('Tidak dapat menemukan baseURL');
@@ -118,12 +114,10 @@ const yt = {
             'origin': this.url.origin
         };
 
-        // Get init URL
         const baseURL = await this.getInitUrl();
         const initApi = `${baseURL}/api/init`;
         console.log('Init API:', initApi);
 
-        // Hit init endpoint
         const r1 = await fetch(initApi, { 
             method: 'POST',
             headers: headers,
@@ -141,7 +135,6 @@ const yt = {
             throw new Error('Convert URL tidak ditemukan di response init');
         }
 
-        // Hit convert endpoint
         const convertApi = j1.convertURL + '&v=' + v + '&f=' + f;
         console.log('Convert API:', convertApi);
 
@@ -154,7 +147,6 @@ const yt = {
         }
 
         if (j2.redirectURL) {
-            // Jika ada redirect URL
             const r3 = await fetch(j2.redirectURL, { headers });
             const j3 = await r3.json();
             
@@ -167,7 +159,6 @@ const yt = {
             };
             return result;
         } else if (j2.progressURL) {
-            // Jika perlu polling progress
             let progressData;
             let attempts = 0;
             const maxAttempts = 10;
@@ -199,7 +190,6 @@ const yt = {
             
             throw new Error('Timeout menunggu konversi selesai');
         } else if (j2.downloadURL) {
-            // Jika langsung dapat download URL
             const result = {
                 title: j2.title || 'Unknown Title',
                 downloadURL: j2.downloadURL,
@@ -212,9 +202,8 @@ const yt = {
             throw new Error('Tidak dapat menemukan download URL');
         }
     }
-}
+};
 
-// Routes
 app.get('/yt', async (req, res) => {
     try {
         const { url, format = 'mp3' } = req.query;
@@ -317,79 +306,4 @@ app.get('/', (req, res) => {
 app.listen(port, () => {
     console.log(`Server berjalan di http://localhost:${port}`);
     console.log(`Coba akses: http://localhost:${port}/yt?url=https://www.youtube.com/watch?v=Fmf-G9fpwto&format=mp3`);
-});        } else {
-            let j3b
-            do {
-                const r3b = await fetch(j2.progressURL, { headers })
-                j3b = await r3b.json()
-                if (j3b.error) throw Error(`ada error pas cek progress`)
-                if (j3b.progress == 3) {
-                    const result = {
-                        title: j3b.title,
-                        downloadURL: j2.downloadURL,
-                        format: f
-                    }
-                    return result
-                }
-                await new Promise(resolve => setTimeout(resolve, 3000))
-            } while (j3b.error != 3)
-        }
-    }
-}
-
-app.get('/yt', async (req, res) => {
-    try {
-        const { url, format = 'mp3' } = req.query;
-        if (!url) {
-            return res.status(400).json({ error: 'Parameter url diperlukan' });
-        }
-        
-        const result = await yt.download(url, format);
-        res.json({
-            status: 'success',
-            data: result
-        });
-    } catch (error) {
-        res.status(500).json({
-            status: 'error',
-            message: error.message
-        });
-    }
-});
-
-app.get('/yts', async (req, res) => {
-    try {
-        const { query } = req.query;
-        if (!query) {
-            return res.status(400).json({ error: 'Parameter query diperlukan' });
-        }
-
-        const searchResult = await yts(query);
-        const videos = searchResult.videos.slice(0, 10).map(video => ({
-            title: video.title,
-            url: video.url,
-            duration: video.duration.timestamp,
-            views: video.views,
-            author: video.author.name,
-            thumbnail: video.thumbnail,
-            uploaded: video.ago
-        }));
-
-        res.json({
-            status: 'success',
-            data: {
-                query: query,
-                results: videos
-            }
-        });
-    } catch (error) {
-        res.status(500).json({
-            status: 'error',
-            message: error.message
-        });
-    }
-});
-
-app.listen(port, () => {
-    console.log(`Server berjalan di http://localhost:${port}`);
 });
