@@ -20,14 +20,10 @@ const yt = {
 
     extractVideoId: function (fV) {
         let v
-        if (fV.indexOf('youtu.be') > -1) {
-            v = /\/([a-zA-Z0-9\-\_]{11})/.exec(fV);
-        } else if (fV.indexOf('youtube.com') > -1) {
-            if (fV.indexOf('/shorts/') > -1) {
-                v = /\/([a-zA-Z0-9\-\_]{11})/.exec(fV);
-            } else {
-                v = /v\=([a-zA-Z0-9\-\_]{11})/.exec(fV);
-            }
+        if (fV.indexOf('youtu.be') > -1) v = /\/([a-zA-Z0-9\-\_]{11})/.exec(fV);
+        else if (fV.indexOf('youtube.com') > -1) {
+            if (fV.indexOf('/shorts/') > -1) v = /\/([a-zA-Z0-9\-\_]{11})/.exec(fV);
+            else v = /v\=([a-zA-Z0-9\-\_]{11})/.exec(fV);
         }
         const result = v?.[1]
         if (!result) throw Error(`gagal extract video id`)
@@ -76,6 +72,21 @@ const yt = {
         return this.genFileUrl(i, pk, rpObj)
     },
 
+    downloadSingle: async function (ytUrl, userFormat) {
+        const rpObj = this.resolvePayload(ytUrl, userFormat)
+        const initObj = await this.init(rpObj)
+        const { i, pk, s } = initObj
+        let result = { userFormat }
+        if (s === 'C') {
+            const wolep = this.genFileUrl(i, pk, rpObj)
+            Object.assign(result, wolep)
+        } else {
+            const wolep = await this.statusCheck(i, pk, rpObj)
+            Object.assign(result, wolep)
+        }
+        return result
+    },
+
     resolvePayload: function (ytUrl, userFormat) {
         const validFormat = ['64k', '96k', '128k', '192k', '256k', '320k', '240p', '360p', '480p', '720p', '1080p']
         if (!validFormat.includes(userFormat)) throw Error(`format salah: ${validFormat.join(', ')}`)
@@ -109,38 +120,6 @@ const yt = {
         return { apiOrigin, payload }
     },
 
-    downloadWithQuality: async function (ytUrl, userFormat) {
-        try {
-            const videoId = this.extractVideoId(ytUrl);
-            const searchResult = await yts({ videoId: videoId });
-            const title = searchResult.title;
-            let format = 'mp3';
-            if (userFormat.includes('p')) format = 'mp4';
-
-            const rpObj = this.resolvePayload(ytUrl, userFormat);
-            const initObj = await this.init(rpObj);
-            const { i, pk, s } = initObj;
-            
-            let downloadURL;
-            if (s === 'C') {
-                const result = this.genFileUrl(i, pk, rpObj);
-                downloadURL = result.downloadUrl;
-            } else {
-                const result = await this.statusCheck(i, pk, rpObj);
-                downloadURL = result.downloadUrl;
-            }
-
-            return {
-                title: title,
-                downloadURL: downloadURL,
-                format: format,
-                quality: userFormat
-            };
-        } catch (error) {
-            throw error;
-        }
-    },
-
     download: async function (ytUrl, userFormat = 'mp3') {
         const videoId = this.extractVideoId(ytUrl);
         const searchResult = await yts({ videoId: videoId });
@@ -150,15 +129,16 @@ const yt = {
             const qualities = ['256k', '192k', '128k', '96k', '64k'];
             for (const quality of qualities) {
                 try {
-                    const result = await this.downloadWithQuality(ytUrl, quality);
-                    return {
-                        title: result.title,
-                        downloadURL: result.downloadURL,
-                        format: 'mp3',
-                        quality: quality
-                    };
+                    const result = await this.downloadSingle(ytUrl, quality);
+                    if (result && result.downloadUrl) {
+                        return {
+                            title: title,
+                            downloadURL: result.downloadUrl,
+                            format: 'mp3',
+                            quality: quality
+                        };
+                    }
                 } catch (error) {
-                    console.log(`Gagal dengan ${quality}, mencoba kualitas lebih rendah...`);
                     continue;
                 }
             }
@@ -168,27 +148,30 @@ const yt = {
             const qualities = ['720p', '480p', '360p', '240p'];
             for (const quality of qualities) {
                 try {
-                    const result = await this.downloadWithQuality(ytUrl, quality);
-                    return {
-                        title: result.title,
-                        downloadURL: result.downloadURL,
-                        format: 'mp4',
-                        quality: quality
-                    };
+                    const result = await this.downloadSingle(ytUrl, quality);
+                    if (result && result.downloadUrl) {
+                        return {
+                            title: title,
+                            downloadURL: result.downloadUrl,
+                            format: 'mp4',
+                            quality: quality
+                        };
+                    }
                 } catch (error) {
-                    console.log(`Gagal dengan ${quality}, mencoba kualitas lebih rendah...`);
                     continue;
                 }
             }
             throw new Error('Semua kualitas video gagal');
         } 
         else {
-            const result = await this.downloadWithQuality(ytUrl, userFormat);
+            const result = await this.downloadSingle(ytUrl, userFormat);
+            let format = 'mp3';
+            if (userFormat.includes('p')) format = 'mp4';
             return {
-                title: result.title,
-                downloadURL: result.downloadURL,
-                format: result.format,
-                quality: result.quality
+                title: title,
+                downloadURL: result.downloadUrl,
+                format: format,
+                quality: userFormat
             };
         }
     }
