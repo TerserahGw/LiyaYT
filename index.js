@@ -1,20 +1,21 @@
 const express = require('express');
 const yts = require('yt-search');
-
 const app = express();
 const port = process.env.PORT || 3000;
 
 const yt = {
-    get url() {
-        return {
-            origin: 'https://ytmp3.cx'
-        }
-    },
+    url: Object.freeze({
+        audio128: 'https://api.apiapi.lat',
+        video: 'https://api5.apiapi.lat',
+        else: 'https://api3.apiapi.lat',
+        referrer: 'https://ogmp3.pro/'
+    }),
 
-    get baseHeaders() {
-        return {
-            'accept-encoding': 'gzip, deflate, br, zstd'
-        }
+    encUrl: (string) => string.split('').map(c => c.charCodeAt()).reverse().join(';'),
+    xor: (string) => string.split('').map(s => String.fromCharCode(s.charCodeAt() ^ 1)).join(''),
+    genRandomHex: () => {
+        const hex = '0123456789abcdef'.split('')
+        return Array.from({ length: 32 }, _ => hex[Math.floor(Math.random() * hex.length)]).join('')
     },
 
     extractVideoId: function (fV) {
@@ -33,109 +34,162 @@ const yt = {
         return result
     },
 
-    getInitUrl: async function () {
-        "use strict"
+    init: async function (rpObj) {
+        const { apiOrigin, payload } = rpObj
+        const { data } = payload
+        const api = apiOrigin + '/' + this.genRandomHex() + '/init/' + this.encUrl(this.xor(data)) + '/' + this.genRandomHex() + '/'
+        let resp = await fetch(api, {
+            method: 'post',
+            body: JSON.stringify(payload)
+        })
+        if (!resp.ok) throw Error(`${resp.status} ${resp.statusText}\n${await resp.text()}`)
+        const json = await resp.json()
+        return json
+    },
+
+    genFileUrl: function (i, pk, rpObj) {
+        const { apiOrigin } = rpObj
+        const pk_value = pk ? pk + "/" : "";
+        const downloadUrl = apiOrigin + "/" + this.genRandomHex() + "/download/" + i + "/" + this.genRandomHex() + "/" + pk_value;
+        return { downloadUrl }
+    },
+
+    statusCheck: async function (i, pk, rpObj) {
+        const { apiOrigin } = rpObj
+        let json = {}
+        let counter = 0
+        do {
+            await new Promise(resolve => setTimeout(resolve, 5000))
+            counter++
+            const pk_value = pk ? pk + '/' : ''
+            let api = apiOrigin + '/' + this.genRandomHex() + '/status/' + i + '/' + this.genRandomHex() + '/' + pk_value
+            const resp = await fetch(api, {
+                method: 'post',
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ data: i })
+            })
+            if (!resp.ok) throw Error(`${resp.status} ${resp.statusText}\n${await resp.text()}`)
+            json = await resp.json()
+            if(counter >= 100) throw Error (`pooling mencapai 100 kali`)
+        } while (json.s === "P")
+        if (json.s === "E") throw Error('gagal\n' + JSON.stringify(json, null, 2))
+        return this.genFileUrl(i, pk, rpObj)
+    },
+
+    resolvePayload: function (ytUrl, userFormat) {
+        const validFormat = ['64k', '96k', '128k', '192k', '256k', '320k', '240p', '360p', '480p', '720p', '1080p']
+        if (!validFormat.includes(userFormat)) throw Error(`format salah: ${validFormat.join(', ')}`)
+        if (typeof (ytUrl) !== "string" || !ytUrl.trim().length) throw Error('youtube url kosong')
+
+        let apiOrigin = this.url.audio128
+        let data = this.xor(ytUrl)
+        let referer = this.url.referrer
+        let format = '0'
+        let mp3Quality = '128'
+        let mp4Quality = '720'
+
+        if (userFormat === '128k') {
+            apiOrigin = this.url.audio128
+        } else if (/^\d+p$/.test(userFormat)) {
+            apiOrigin = this.url.video
+            mp4Quality = userFormat.match(/\d+/g)[0]
+            format = '1'
+        } else {
+            apiOrigin = this.url.else
+            mp3Quality = userFormat.match(/\d+/g)[0]
+        }
+        const payload = {
+            data,
+            format,
+            referer,
+            mp3Quality,
+            mp4Quality,
+            "userTimeZone": "-480"
+        }
+        return { apiOrigin, payload }
+    },
+
+    downloadWithQuality: async function (ytUrl, userFormat) {
         try {
-            const r1 = await fetch(this.url.origin, { headers: this.baseHeaders })
-            console.log('hit homepage')
+            const videoId = this.extractVideoId(ytUrl);
+            const searchResult = await yts({ videoId: videoId });
+            const title = searchResult.title;
+            let format = 'mp3';
+            if (userFormat.includes('p')) format = 'mp4';
 
-            const html = await r1.text()
-            const jsPath = html.match(/<script src="(.+?)"/)?.[1]
-            const jsUrl = this.url.origin + jsPath
-
-            const r2 = await fetch(jsUrl, { headers: this.baseHeaders })
-            console.log('hit js')
-            const js = await r2.text()
-
-            const gB_m = js.match(/gB=(.+?),gD/)?.[1]
-            const gB = eval(gB_m)
-
-            const html_m = html.match(/<script>(.+?)<\/script>/)?.[1]
-            const hiddenGc = eval(html_m + "gC")
-            const gC = Object.fromEntries(Object.getOwnPropertyNames(hiddenGc).map(key => [key, hiddenGc[key]]))
-
-            const decodeBin = (d) => d.split(' ').map(v => parseInt(v, 2))
-            const decodeHex = (d) => d.match(/0x[a-fA-F0-9]{2}/g).map(v => String.fromCharCode(v)).join("")
-            const getTimestamp = () => Math.floor((new Date).getTime() / 1e3)
-
-            function authorization() {
-                var dec = decodeBin(gC.d(1)[0]);
-                var k = '';
-                for (var i = 0; i < dec.length; i++) k += (gC.d(2)[0] > 0) ? atob(gC.d(1)[1]).split('').reverse().join('')[(dec[i] - gC.d(2)[1])] : atob(gC.d(1)[1])[(dec[i] - gC.d(2)[1])];
-                if (gC.d(2)[2] > 0) k = k.substring(0, gC.d(2)[2]);
-                switch (gC.d(2)[3]) {
-                    case 0:
-                        return btoa(k + '_' + decodeHex(gC.d(3)[0]));
-                    case 1:
-                        return btoa(k.toLowerCase() + '_' + decodeHex(gC.d(3)[0]));
-                    case 2:
-                        return btoa(k.toUpperCase() + '_' + decodeHex(gC.d(3)[0]));
-                }
+            const rpObj = this.resolvePayload(ytUrl, userFormat);
+            const initObj = await this.init(rpObj);
+            const { i, pk, s } = initObj;
+            
+            let downloadURL;
+            if (s === 'C') {
+                const result = this.genFileUrl(i, pk, rpObj);
+                downloadURL = result.downloadUrl;
+            } else {
+                const result = await this.statusCheck(i, pk, rpObj);
+                downloadURL = result.downloadUrl;
             }
 
-            const api_m = js.matchAll(/};var \S{1}=(.+?);gR&&\(/g)
-            const e = Array.from(api_m)?.[1]?.[1]
-            const apiUrl = eval(`${e}`)
-            return apiUrl
-        } catch (e) {
-            throw new Error('fungsi getApiUrl gagal')
+            return {
+                title: title,
+                downloadURL: downloadURL,
+                format: format,
+                quality: userFormat
+            };
+        } catch (error) {
+            throw error;
         }
     },
 
-    download: async function (url, f = 'mp3') {
-        if (!/^mp3|mp4$/.test(f)) throw Error(`format valid mp3 or mp4`)
+    download: async function (ytUrl, userFormat = 'mp3') {
+        const videoId = this.extractVideoId(ytUrl);
+        const searchResult = await yts({ videoId: videoId });
+        const title = searchResult.title;
 
-        const v = this.extractVideoId(url)
-
-        const headers = {
-            'referer': this.url.origin,
-            ...this.baseHeaders
-        }
-
-        const initApi = await this.getInitUrl()
-
-        const r1 = await fetch(initApi, { headers })
-        console.log('hit init')
-
-        const j1 = await r1.json()
-        const { convertURL } = j1
-
-        const convertApi = convertURL + '&v=' + v + '&f=' + f + '&_=' + Math.random()
-        const r2 = await fetch(convertApi, { headers })
-        console.log('hit convert url')
-
-        const j2 = await r2.json()
-        if (j2.error) {
-            throw Error(`ada error di value convert. nih\n${JSON.stringify(j2, null, 2)}`)
-        }
-
-        if (j2.redirectURL) {
-            const r3 = await fetch(j2.redirectURL, { headers })
-            console.log('hit redirect')
-            const j3 = await r3.json()
-            const result = {
-                title: j3.title,
-                downloadURL: j3.downloadURL,
-                format: f
-            }
-            return result
-        } else {
-            let j3b
-            do {
-                const r3b = await fetch(j2.progressURL, { headers })
-                console.log('hit progress')
-                j3b = await r3b.json()
-                if (j3b.error) throw Error(`ada error pas cek progress. nih\n${JSON.stringify(j3b, null, 2)}`)
-                if (j3b.progress == 3) {
-                    const result = {
-                        title: j3b.title,
-                        downloadURL: j2.downloadURL,
-                        format: f
-                    }
-                    return result
+        if (userFormat === 'mp3') {
+            const qualities = ['256k', '192k', '128k', '96k', '64k'];
+            for (const quality of qualities) {
+                try {
+                    const result = await this.downloadWithQuality(ytUrl, quality);
+                    return {
+                        title: result.title,
+                        downloadURL: result.downloadURL,
+                        format: 'mp3',
+                        quality: quality
+                    };
+                } catch (error) {
+                    console.log(`Gagal dengan ${quality}, mencoba kualitas lebih rendah...`);
+                    continue;
                 }
-                await new Promise(resolve => setTimeout(resolve, 3000))
-            } while (j3b.error != 3)
+            }
+            throw new Error('Semua kualitas audio gagal');
+        } 
+        else if (userFormat === 'mp4') {
+            const qualities = ['720p', '480p', '360p', '240p'];
+            for (const quality of qualities) {
+                try {
+                    const result = await this.downloadWithQuality(ytUrl, quality);
+                    return {
+                        title: result.title,
+                        downloadURL: result.downloadURL,
+                        format: 'mp4',
+                        quality: quality
+                    };
+                } catch (error) {
+                    console.log(`Gagal dengan ${quality}, mencoba kualitas lebih rendah...`);
+                    continue;
+                }
+            }
+            throw new Error('Semua kualitas video gagal');
+        } 
+        else {
+            const result = await this.downloadWithQuality(ytUrl, userFormat);
+            return {
+                title: result.title,
+                downloadURL: result.downloadURL,
+                format: result.format,
+                quality: result.quality
+            };
         }
     }
 }
@@ -143,44 +197,32 @@ const yt = {
 app.get('/yt', async (req, res) => {
     try {
         const { url, format = 'mp3' } = req.query;
-        
-        if (!url) {
-            return res.status(400).json({ 
-                status: 'error',
-                message: 'Parameter url diperlukan' 
-            });
-        }
+        if (!url) return res.status(400).json({ status: 'error', message: 'Parameter url diperlukan' });
 
-        console.log(`Request download: ${url}, format: ${format}`);
+        console.log(`Request: ${url}, format: ${format}`);
         const result = await yt.download(url, format);
         
         res.json({
             status: 'success',
-            data: result
+            data: {
+                title: result.title,
+                downloadURL: result.downloadURL,
+                format: format.toLowerCase().includes('mp') ? format : result.format
+            }
         });
-        
     } catch (error) {
-        console.error('Error di /yt endpoint:', error.message);
-        res.status(500).json({
-            status: 'error',
-            message: error.message
-        });
+        console.error('Error:', error.message);
+        res.status(500).json({ status: 'error', message: error.message });
     }
 });
 
 app.get('/yts', async (req, res) => {
     try {
         const { query } = req.query;
-        if (!query) {
-            return res.status(400).json({ 
-                status: 'error',
-                message: 'Parameter query diperlukan' 
-            });
-        }
+        if (!query) return res.status(400).json({ status: 'error', message: 'Parameter query diperlukan' });
 
-        console.log(`Search query: ${query}`);
+        console.log(`Search: ${query}`);
         const searchResult = await yts(query);
-        
         const videos = searchResult.videos.slice(0, 10).map(video => ({
             videoId: video.videoId,
             title: video.title,
@@ -188,10 +230,7 @@ app.get('/yts', async (req, res) => {
             duration: video.duration.timestamp,
             timestamp: video.timestamp,
             views: video.views,
-            author: {
-                name: video.author.name,
-                channelUrl: video.author.url
-            },
+            author: { name: video.author.name, channelUrl: video.author.url },
             thumbnail: video.thumbnail,
             uploaded: video.ago,
             description: video.description
@@ -199,19 +238,11 @@ app.get('/yts', async (req, res) => {
 
         res.json({
             status: 'success',
-            data: {
-                query: query,
-                totalResults: searchResult.all.length,
-                results: videos
-            }
+            data: { query: query, totalResults: searchResult.all.length, results: videos }
         });
-        
     } catch (error) {
-        console.error('Error di /yts endpoint:', error.message);
-        res.status(500).json({
-            status: 'error',
-            message: error.message
-        });
+        console.error('Error:', error.message);
+        res.status(500).json({ status: 'error', message: error.message });
     }
 });
 
@@ -222,24 +253,19 @@ app.get('/', (req, res) => {
         endpoints: {
             '/yt': {
                 method: 'GET',
-                parameters: {
-                    url: 'YouTube URL (required)',
-                    format: 'mp3 atau mp4 (optional, default: mp3)'
-                },
-                example: '/yt?url=https://www.youtube.com/watch?v=VIDEO_ID&format=mp3'
+                parameters: { url: 'YouTube URL (required)', format: 'mp3, mp4, 64k, 96k, 128k, 192k, 256k, 320k, 240p, 360p, 480p, 720p, 1080p (default: mp3)' },
+                examples: {
+                    mp3_default: '/yt?url=URL&format=mp3',
+                    mp4_default: '/yt?url=URL&format=mp4',
+                    high_quality: '/yt?url=URL&format=320k',
+                    hd_video: '/yt?url=URL&format=1080p'
+                }
             },
-            '/yts': {
-                method: 'GET',
-                parameters: {
-                    query: 'Search query (required)'
-                },
-                example: '/yts?query=superman+theme'
-            }
+            '/yts': { method: 'GET', parameters: { query: 'Search query (required)' } }
         }
     });
 });
 
 app.listen(port, () => {
     console.log(`Server berjalan di http://localhost:${port}`);
-    console.log(`Coba akses: http://localhost:${port}/yt?url=https://www.youtube.com/watch?v=Fmf-G9fpwto&format=mp3`);
 });
